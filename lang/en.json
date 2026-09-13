@@ -1,0 +1,27 @@
+{
+  "LAS.Title": "Art Inbox",
+  "LAS.Refresh": "Refresh",
+  "LAS.FilterPlaceholder": "Filter by file name",
+  "LAS.Files": "files",
+  "LAS.Loading": "Loading…",
+  "LAS.Empty": "No files in the inbox folder yet. Start the watcher (see the module README) and drop images into your local folder.",
+  "LAS.Footer": "Drag a card into any image-path field to use it. The watcher script uploads new files from your local folder; press Refresh to see them.",
+
+  "LAS.Host.Forge": "Forge assets library",
+  "LAS.Host.Local": "local data folder",
+
+  "LAS.Tip.Copy": "Copy the file URL",
+  "LAS.Tip.Open": "Open in a new tab",
+  "LAS.Tip.ApplyToken": "Set as image of the selected token(s); hold Shift to also set the actor portrait and prototype token",
+
+  "LAS.Settings.Path.Name": "Inbox folder in the assets library",
+  "LAS.Settings.Path.Hint": "Path inside your Forge assets library (or the local Data folder) that the watcher uploads into, e.g. art/inbox.",
+  "LAS.Settings.Menu.Name": "Art Inbox",
+  "LAS.Settings.Menu.Label": "Open Art Inbox",
+  "LAS.Settings.Menu.Hint": "Browse the uploaded art, copy URLs, drag images onto tokens and items.",
+
+  "LAS.Notify.GMOnly": "Only the GM can open the Art Inbox.",
+  "LAS.Notify.Copied": "Copied the URL of {name}.",
+  "LAS.Notify.NoToken": "Select one or more tokens on the scene first.",
+  "LAS.Notify.Applied": "Set {name} on {n} token(s)."
+}
