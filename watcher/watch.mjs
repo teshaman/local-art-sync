@@ -4,10 +4,14 @@
  * (or copies them into a local Foundry Data folder) and records the resulting URLs in
  * manifest.json next to the files, so Claude Code, Codex/ChatGPT and macros can look them up.
  *
+ * Category subfolders: a file saved in <folder>/npcs/ is uploaded to <dest>/npcs/, one in
+ * <folder>/items/ to <dest>/items/, and so on. Files dropped in the root of <folder> go to
+ * <dest>/inbox/. The standard category folders are created on start so they can be used at once.
+ *
  * Usage:
- *   node watch.mjs --folder "C:\path\to\art" [--dest art/inbox] [--once] [--interval 5]
- *   node watch.mjs --folder "C:\path\to\art" --local-data "C:\Users\me\AppData\Local\FoundryVTT\Data" [--dest art/inbox]
- *   node watch.mjs --folder "C:\path\to\art" --list
+ *   node watch.mjs --folder "C:/path/to/art" [--dest art] [--once] [--interval 5]
+ *   node watch.mjs --folder "C:/path/to/art" --local-data "C:/Users/me/AppData/Local/FoundryVTT/Data" [--dest art]
+ *   node watch.mjs --folder "C:/path/to/art" --list
  *
  * Forge mode needs an API key: set FORGE_API_KEY (My Account -> API Manager on forge-vtt.com), or pass --api-key.
  * Zero dependencies; Node 20+.
@@ -19,14 +23,17 @@ import process from "node:process";
 const FORGE_URL = process.env.FORGE_URL || "https://forge-vtt.com";
 const MEDIA = new Set(["png", "jpg", "jpeg", "webp", "gif", "svg", "avif", "bmp", "mp3", "ogg", "wav", "webm", "mp4", "m4a", "flac"]);
 const MANIFEST = "manifest.json";
+/** Standard category folders (mirrored in the module's inbox-app.mjs). "inbox" is the uncategorised drop. */
+const CATEGORIES = ["inbox", "npcs", "tokens", "portraits", "items", "feats", "spells", "classes", "backgrounds", "scenes", "journals", "locations", "factions", "misc"];
 
 const args = parseArgs(process.argv.slice(2));
 if (args.help || !args.folder) {
-  console.log(`Usage: node watch.mjs --folder <dir> [--dest art/inbox] [--local-data <FoundryData>] [--api-key <key>] [--interval 5] [--once] [--list]`);
+  console.log("Usage: node watch.mjs --folder <dir> [--dest art] [--local-data <FoundryData>] [--api-key <key>] [--interval 5] [--once] [--list] [--no-folders]");
   process.exit(args.help ? 0 : 1);
 }
 const folder = path.resolve(args.folder);
-const dest = String(args.dest || "art/inbox").replace(/^\/+|\/+$/g, "").replace(/\\/g, "/");
+// Destination ROOT in the assets library; a legacy "art/inbox" value is treated as root "art".
+const dest = String(args.dest || "art").replace(/\\/g, "/").replace(/^\/+|\/+$/g, "").replace(/\/inbox$/, "");
 const localData = args["local-data"] ? path.resolve(args["local-data"]) : null;
 const apiKey = args["api-key"] || process.env.FORGE_API_KEY || "";
 const intervalMs = Math.max(2, Number(args.interval) || 5) * 1000;
@@ -38,35 +45,30 @@ if (localData && !fs.existsSync(localData)) fail(`local data folder not found: $
 
 const manifest = readManifest();
 if (args.list) {
-  for (const [name, e] of Object.entries(manifest)) console.log(`${name}\t${e.url}`);
+  for (const [key, e] of Object.entries(manifest)) console.log(`${key}\t${e.url}`);
   process.exit(0);
 }
+if (!args["no-folders"]) for (const c of CATEGORIES) fs.mkdirSync(path.join(folder, c), { recursive: true });
 
-log(`watching ${folder}`);
-log(localData ? `mode: local Foundry -> ${path.join(localData, dest)}` : `mode: The Forge assets library -> ${dest}`);
+log(`watching ${folder} (categories: ${CATEGORIES.join(", ")})`);
+log(localData ? `mode: local Foundry -> ${path.join(localData, dest)}/<category>` : `mode: The Forge assets library -> ${dest}/<category>`);
 
 let running = false, again = false;
 async function sync() {
   if (running) { again = true; return; }
   running = true;
   try {
-    for (const name of fs.readdirSync(folder)) {
-      const full = path.join(folder, name);
-      let st;
-      try { st = fs.statSync(full); } catch { continue; }
-      if (!st.isFile() || name === MANIFEST || name.startsWith(".")) continue;
-      const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
-      if (!MEDIA.has(ext)) continue;
-      const prev = manifest[name];
-      if (prev && prev.size === st.size && prev.mtimeMs === st.mtimeMs) continue;
-      if (Date.now() - st.mtimeMs < 1500) { again = true; continue; }   // still being written
+    for (const f of walk()) {
+      const prev = manifest[f.key];
+      if (prev && prev.size === f.stat.size && prev.mtimeMs === f.stat.mtimeMs) continue;
+      if (Date.now() - f.stat.mtimeMs < 1500) { again = true; continue; }   // still being written
       try {
-        const url = localData ? copyLocal(full, name) : await uploadForge(full, name);
-        manifest[name] = { url, size: st.size, mtimeMs: st.mtimeMs, uploadedAt: new Date().toISOString() };
+        const url = localData ? copyLocal(f) : await uploadForge(f);
+        manifest[f.key] = { url, category: f.category, size: f.stat.size, mtimeMs: f.stat.mtimeMs, uploadedAt: new Date().toISOString() };
         writeManifest();
-        log(`uploaded ${name}\n           ${url}`);
+        log(`uploaded ${f.key}\n           ${url}`);
       } catch (err) {
-        log(`FAILED ${name}: ${err.message}`);
+        log(`FAILED ${f.key}: ${err.message}`);
       }
     }
   } finally {
@@ -77,16 +79,47 @@ async function sync() {
 
 await sync();
 if (args.once) process.exit(0);
-try { fs.watch(folder, { persistent: true }, () => { again = true; setTimeout(sync, 800); }); } catch { /* polling below covers it */ }
+try { fs.watch(folder, { persistent: true, recursive: true }, () => { again = true; setTimeout(sync, 800); }); } catch { /* polling below covers it */ }
 setInterval(sync, intervalMs);
+
+/* ---------------------------------------------------------------- files */
+
+/** Media files in the root (category "inbox") and one level of subfolders (category = folder name). */
+function* walk() {
+  for (const entry of listDir(folder)) {
+    if (entry.stat.isDirectory()) {
+      const category = entry.name.toLowerCase();
+      for (const sub of listDir(entry.full)) {
+        if (sub.stat.isFile() && isMedia(sub.name)) yield { ...sub, category, key: `${entry.name}/${sub.name}` };
+      }
+    } else if (entry.stat.isFile() && isMedia(entry.name)) {
+      yield { ...entry, category: "inbox", key: entry.name };
+    }
+  }
+}
+function listDir(dir) {
+  const out = [];
+  let names = [];
+  try { names = fs.readdirSync(dir); } catch { return out; }
+  for (const name of names) {
+    if (name === MANIFEST || name.startsWith(".")) continue;
+    const full = path.join(dir, name);
+    try { out.push({ name, full, stat: fs.statSync(full) }); } catch { /* vanished */ }
+  }
+  return out;
+}
+function isMedia(name) {
+  const ext = name.includes(".") ? name.split(".").pop().toLowerCase() : "";
+  return MEDIA.has(ext);
+}
 
 /* ---------------------------------------------------------------- upload */
 
-async function uploadForge(full, name) {
-  const target = `${dest}/${name}`;
+async function uploadForge(f) {
+  const dir = `${dest}/${f.category}`;
   const form = new FormData();
-  form.append("path", target);
-  form.append("file", new Blob([fs.readFileSync(full)], { type: mimeOf(name) }), name);
+  form.append("path", `${dir}/${f.name}`);
+  form.append("file", new Blob([fs.readFileSync(f.full)], { type: mimeOf(f.name) }), f.name);
   const res = await fetch(`${FORGE_URL}/api/assets/upload`, { method: "POST", headers: { "Access-Key": apiKey }, body: form });
   let body = null;
   try { body = await res.json(); } catch { /* not json */ }
@@ -94,19 +127,19 @@ async function uploadForge(full, name) {
   if (body?.url) return body.url;
   // Fall back to browsing the destination folder for the file's URL
   const browse = await fetch(`${FORGE_URL}/api/assets/browse`, {
-    method: "POST", headers: { "Access-Key": apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ path: dest })
+    method: "POST", headers: { "Access-Key": apiKey, "Content-Type": "application/json" }, body: JSON.stringify({ path: dir })
   });
   const listing = await browse.json().catch(() => null);
-  const hit = (listing?.files ?? []).find(f => decodeURIComponent(String(f.url ?? f).split("/").pop()) === name);
+  const hit = (listing?.files ?? []).find(x => decodeURIComponent(String(x.url ?? x).split("/").pop()) === f.name);
   if (!hit) throw new Error("uploaded, but the file's URL was not returned; check the assets library");
   return hit.url ?? hit;
 }
 
-function copyLocal(full, name) {
-  const dir = path.join(localData, dest);
+function copyLocal(f) {
+  const dir = path.join(localData, dest, f.category);
   fs.mkdirSync(dir, { recursive: true });
-  fs.copyFileSync(full, path.join(dir, name));
-  return `${dest}/${name}`;
+  fs.copyFileSync(f.full, path.join(dir, f.name));
+  return `${dest}/${f.category}/${f.name}`;
 }
 
 /* ---------------------------------------------------------------- helpers */

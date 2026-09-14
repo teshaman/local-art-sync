@@ -2,8 +2,14 @@
   <button type="button" data-action="refresh" {{#if busy}}disabled{{/if}}>
     <i class="fa-solid fa-rotate {{#if busy}}fa-spin{{/if}}"></i> {{localize "LAS.Refresh"}}
   </button>
+  <select data-category>
+    <option value="" {{#unless category}}selected{{/unless}}>{{localize "LAS.AllCategories"}} ({{count}})</option>
+    {{#each categories}}
+    <option value="{{id}}" {{#if selected}}selected{{/if}}>{{label}} ({{count}})</option>
+    {{/each}}
+  </select>
   <input type="text" data-filter value="{{filter}}" placeholder="{{localize 'LAS.FilterPlaceholder'}}">
-  <span class="las-meta"><i class="fa-solid fa-folder"></i> {{path}} · {{count}} {{localize "LAS.Files"}} · {{host}}</span>
+  <span class="las-meta"><i class="fa-solid fa-folder"></i> {{path}}/… · {{host}}</span>
 </div>
 
 {{#if error}}<p class="las-error">{{error}}</p>{{/if}}
@@ -11,13 +17,14 @@
 {{#if files.length}}
 <div class="las-grid">
   {{#each files}}
-  <div class="las-card" draggable="true" data-name="{{name}}" data-url="{{url}}">
+  <div class="las-card" draggable="true" data-name="{{name}}" data-url="{{url}}" data-category="{{category}}">
     {{#if (eq kind "image")}}
     <img src="{{url}}" alt="{{name}}" loading="lazy">
     {{else}}
     <div class="las-placeholder"><i class="fa-solid {{#if (eq kind "audio")}}fa-music{{else if (eq kind "video")}}fa-film{{else}}fa-file{{/if}}"></i></div>
     {{/if}}
-    <div class="las-name" title="{{name}}">{{name}}</div>
+    <span class="las-badge">{{category}}</span>
+    <div class="las-name" title="{{path}}">{{name}}</div>
     <div class="las-actions">
       <button type="button" data-action="copy" data-tooltip="{{localize 'LAS.Tip.Copy'}}"><i class="fa-solid fa-copy"></i></button>
       <button type="button" data-action="open" data-tooltip="{{localize 'LAS.Tip.Open'}}"><i class="fa-solid fa-up-right-from-square"></i></button>
